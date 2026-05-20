@@ -1,4 +1,4 @@
-import type { FigmaFile, FigmaComponentMeta, FigmaNode } from '../figma-client';
+import type { FigmaFile, FigmaComponentMeta } from '../figma-client';
 import { walkNodes } from '../figma-client';
 import type { TestResult, TestDetail } from './types';
 
@@ -21,7 +21,7 @@ export function testComponentCompleteness(
   file: FigmaFile,
   components: FigmaComponentMeta[],
 ): TestResult[] {
-  const componentSets = extractComponentSets(file.document);
+  const componentSets = extractComponentSets(file);
 
   return [
     testVariantCoverage(componentSets),
@@ -33,17 +33,18 @@ export function testComponentCompleteness(
   ];
 }
 
-function extractComponentSets(doc: FigmaNode): ComponentSetInfo[] {
-  const sets: ComponentSetInfo[] = [];
+function extractComponentSets(file: FigmaFile): ComponentSetInfo[] {
+  // Walk the document tree for full variant/property detail
+  const byNodeId = new Map<string, ComponentSetInfo>();
 
-  walkNodes(doc, (node) => {
+  walkNodes(file.document, (node) => {
     if (node.type === 'COMPONENT_SET' && !isDeprecated(node.name)) {
       const propDefs = node.componentPropertyDefinitions ?? {};
       const variantProps = Object.entries(propDefs)
         .filter(([, def]) => def.type === 'VARIANT')
         .flatMap(([, def]) => def.variantOptions ?? []);
 
-      sets.push({
+      byNodeId.set(node.id, {
         name: node.name,
         nodeId: node.id,
         variants: variantProps,
@@ -54,7 +55,22 @@ function extractComponentSets(doc: FigmaNode): ComponentSetInfo[] {
     }
   });
 
-  return sets;
+  // Merge with file-level componentSets map — catches sets missed due to shallow fetch depth
+  // or components living in a library file. Record keys are node IDs.
+  for (const [nodeId, meta] of Object.entries(file.componentSets ?? {})) {
+    if (!byNodeId.has(nodeId) && !isDeprecated(meta.name)) {
+      byNodeId.set(nodeId, {
+        name: meta.name,
+        nodeId,
+        variants: [],
+        properties: [],
+        hasDescription: !!(meta.description && meta.description.trim().length > 0),
+        documentationLinks: meta.documentationLinks?.length ?? 0,
+      });
+    }
+  }
+
+  return [...byNodeId.values()];
 }
 
 function testVariantCoverage(sets: ComponentSetInfo[]): TestResult {
