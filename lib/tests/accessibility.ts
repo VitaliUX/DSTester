@@ -32,27 +32,40 @@ export function testAccessibility(
   ];
 }
 
+function componentContext(node: FigmaNode): string {
+  const propDefs = node.componentPropertyDefinitions ?? {};
+  const variantParts = Object.entries(propDefs)
+    .filter(([, def]) => def.type === 'VARIANT')
+    .map(([key, def]) => `${key}=${def.defaultValue}`)
+    .join(', ');
+  return variantParts ? `${node.name} [${variantParts}]` : node.name;
+}
+
 function extractColorPairs(doc: FigmaNode): ColorPair[] {
   const pairs: ColorPair[] = [];
 
-  walkNodes(doc, (node) => {
-    if (node.type !== 'TEXT' || !node.fills || node.fills.length === 0) return;
-    if (!node.absoluteBoundingBox) return;
+  function walk(node: FigmaNode, ancestor: string) {
+    const isComponent = node.type === 'COMPONENT' || node.type === 'COMPONENT_SET' || node.type === 'INSTANCE';
+    const ctx = isComponent ? componentContext(node) : ancestor;
 
-    const textFill = node.fills.find((f) => f.type === 'SOLID' && f.color);
-    if (!textFill?.color) return;
+    if (node.type === 'TEXT' && node.fills?.length && node.absoluteBoundingBox) {
+      const textFill = node.fills.find((f) => f.type === 'SOLID' && f.color);
+      if (textFill?.color) {
+        pairs.push({
+          text: textFill.color,
+          background: { r: 1, g: 1, b: 1 },
+          fontSize: node.style?.fontSize,
+          context: ctx || node.name || 'text',
+          nodeId: node.id,
+        });
+      }
+    }
 
-    // Look for a background on parent — simplified heuristic using white as default bg
-    pairs.push({
-      text: textFill.color,
-      background: { r: 1, g: 1, b: 1 }, // assume white bg as worst case
-      fontSize: node.style?.fontSize,
-      context: node.name || 'text',
-      nodeId: node.id,
-    });
-  });
+    for (const child of node.children ?? []) walk(child, ctx);
+  }
 
-  return pairs.slice(0, 100); // cap for performance
+  walk(doc, '');
+  return pairs.slice(0, 100);
 }
 
 function testColorContrast(pairs: ColorPair[]): TestResult {
@@ -89,8 +102,8 @@ function testColorContrast(pairs: ColorPair[]): TestResult {
   const failures = results.filter((r) => !r.pass).slice(0, 5);
 
   const details: TestDetail[] = failures.map((f) => ({
-    label: `${f.hex} on white`,
-    value: `Ratio: ${f.ratio}:1 (context: ${f.context})`,
+    label: f.context,
+    value: `${f.hex} · ratio ${f.ratio}:1 on white`,
     status: 'fail' as const,
     nodeId: f.nodeId,
   }));
