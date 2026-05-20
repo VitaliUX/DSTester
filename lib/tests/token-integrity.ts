@@ -1,47 +1,40 @@
 import type { FigmaFile, FigmaVariablesResponse, FigmaStyleMeta } from '../figma-client';
 import type { TestResult, TestDetail } from './types';
 
+// Semantic keywords accepted anywhere in a slash/dot/dash/underscore-separated token path
+const SEMANTIC_KEYWORDS = /^(colou?rs?|semantic|alias|brand|neutral|feedback|spacing|space|radius|motion|duration|typography|text|font|icon|border|surface|background|bg|fg|foreground|elevation|shadow|size|scale|primitive|global|sys|ref)$/i;
+
+function hasSemanticSegment(name: string): boolean {
+  return name.split(/[/.\-_]/).some((seg) => SEMANTIC_KEYWORDS.test(seg));
+}
+
 const EXPECTED_SEMANTIC_CATEGORIES = [
   'color', 'typography', 'spacing', 'radius', 'shadow', 'motion', 'border',
 ];
-
-const PRIMITIVE_PATTERNS = /^(#[0-9a-fA-F]{3,8}|\d+px|rgba?\(|hsl\(|var\(--(?!color|space|font|text|border|radius|shadow|motion))/;
 
 export function testTokenIntegrity(
   file: FigmaFile,
   variables: FigmaVariablesResponse | null,
   styles: FigmaStyleMeta[],
 ): TestResult[] {
-  const results: TestResult[] = [];
-
-  // T1: Variable collections defined
-  results.push(testVariableCollections(variables));
-
-  // T2: Semantic token naming
-  results.push(testSemanticNaming(variables));
-
-  // T3: Token aliasing (tokens reference tokens, not raw values)
-  results.push(testTokenAliasing(variables));
-
-  // T4: Multi-mode / theming support
-  results.push(testThemingSupport(variables));
-
-  // T5: Style coverage
-  results.push(testStyleCoverage(styles));
-
-  // T6: Token scope definitions
-  results.push(testTokenScopes(variables));
-
-  return results;
+  return [
+    testVariableCollections(variables),
+    testSemanticNaming(variables),
+    testTokenAliasing(variables),
+    testThemingSupport(variables),
+    testStyleCoverage(styles, variables),
+    testTokenScopes(variables),
+  ];
 }
 
+// T1
 function testVariableCollections(variables: FigmaVariablesResponse | null): TestResult {
   if (!variables) {
     return {
       id: 't1-collections',
       name: 'Variable Collections Defined',
       status: 'warn',
-      score: 0,
+      score: 50, // neutral — plan limitation, not a DS failure
       message: 'Variables API unavailable (requires Enterprise plan). Falling back to style analysis.',
       impact: 'medium',
     };
@@ -76,6 +69,7 @@ function testVariableCollections(variables: FigmaVariablesResponse | null): Test
   };
 }
 
+// T2
 function testSemanticNaming(variables: FigmaVariablesResponse | null): TestResult {
   if (!variables) {
     return {
@@ -100,16 +94,15 @@ function testSemanticNaming(variables: FigmaVariablesResponse | null): TestResul
     };
   }
 
-  // Check if names use semantic prefixes (color/brand/neutral etc) vs just raw names
-  const semanticPrefixes = /^(color|colors|semantic|alias|brand|neutral|feedback|spacing|radius|motion|typography|text|icon|border|surface|background|bg|fg|foreground)\//i;
+  const semanticCount = allVars.filter((v) => hasSemanticSegment(v.name)).length;
   const primitiveOnly = /^\d+$|^#[0-9a-f]+$/i;
-
-  const semanticCount = allVars.filter((v) => semanticPrefixes.test(v.name)).length;
   const primitiveCount = allVars.filter((v) => primitiveOnly.test(v.name)).length;
   const score = Math.round((semanticCount / allVars.length) * 100);
 
   const details: TestDetail[] = EXPECTED_SEMANTIC_CATEGORIES.map((cat) => {
-    const found = allVars.filter((v) => v.name.toLowerCase().startsWith(cat));
+    const found = allVars.filter((v) =>
+      v.name.split(/[/.\-_]/).some((seg) => seg.toLowerCase() === cat || seg.toLowerCase() === cat + 's')
+    );
     return {
       label: cat,
       value: found.length > 0 ? `${found.length} tokens` : 'Not found',
@@ -128,6 +121,7 @@ function testSemanticNaming(variables: FigmaVariablesResponse | null): TestResul
   };
 }
 
+// T3
 function testTokenAliasing(variables: FigmaVariablesResponse | null): TestResult {
   if (!variables) {
     return {
@@ -160,21 +154,20 @@ function testTokenAliasing(variables: FigmaVariablesResponse | null): TestResult
     }
   }
 
-  const score = allVars.length > 0 ? Math.round((aliasedCount / allVars.length) * 100) : 0;
-  // Expect at least some aliasing if there's a semantic layer
-  const expectedAliasRatio = 0.3;
-  const hasAliasing = aliasedCount / allVars.length >= expectedAliasRatio;
+  const ratio = aliasedCount / allVars.length;
+  const score = Math.round(ratio * 100);
 
   return {
     id: 't3-aliasing',
     name: 'Token Aliasing (Semantic → Primitive)',
-    status: hasAliasing ? 'pass' : aliasedCount > 0 ? 'warn' : 'fail',
-    score: hasAliasing ? 100 : Math.min(Math.round((aliasedCount / allVars.length / expectedAliasRatio) * 100), 99),
-    message: `${aliasedCount}/${allVars.length} tokens reference other tokens (aliasing). ${hasAliasing ? 'Semantic layer detected.' : 'Low aliasing — components may use raw values.'}`,
+    status: ratio >= 0.3 ? 'pass' : ratio >= 0.05 ? 'warn' : 'fail',
+    score,
+    message: `${aliasedCount}/${allVars.length} tokens reference other tokens (aliasing). ${ratio >= 0.3 ? 'Semantic layer detected.' : ratio >= 0.05 ? 'Partial aliasing — consider a semantic layer over primitives.' : 'No aliasing — components likely use raw values directly.'}`,
     impact: 'high',
   };
 }
 
+// T4
 function testThemingSupport(variables: FigmaVariablesResponse | null): TestResult {
   if (!variables) {
     return {
@@ -205,25 +198,46 @@ function testThemingSupport(variables: FigmaVariablesResponse | null): TestResul
   return {
     id: 't4-theming',
     name: 'Multi-Mode / Theming Support',
-    status: hasLightDark ? 'pass' : hasMultiMode ? 'warn' : 'fail',
-    score: hasLightDark ? 100 : hasMultiMode ? 60 : 0,
+    // Any multi-mode = pass; light/dark names = bonus detail only
+    status: hasMultiMode ? 'pass' : 'fail',
+    score: hasLightDark ? 100 : hasMultiMode ? 80 : 0,
     message: hasLightDark
       ? `Light/dark modes found in ${lightDarkCollections.length} collection(s).`
       : hasMultiMode
-        ? `Multi-mode collections found but no explicit light/dark theming detected.`
+        ? `${multiModeCollections.length} multi-mode collection(s) found. No explicit light/dark names detected — modes may use custom naming.`
         : 'No multi-mode collections. Theming support is missing.',
     details,
     impact: 'medium',
   };
 }
 
-function testStyleCoverage(styles: FigmaStyleMeta[]): TestResult {
+// T5
+function testStyleCoverage(styles: FigmaStyleMeta[], variables: FigmaVariablesResponse | null): TestResult {
   const fillStyles = styles.filter((s) => s.styleType === 'FILL');
   const textStyles = styles.filter((s) => s.styleType === 'TEXT');
   const effectStyles = styles.filter((s) => s.styleType === 'EFFECT');
   const gridStyles = styles.filter((s) => s.styleType === 'GRID');
 
-  const hasMinimumStyles = fillStyles.length >= 5 && textStyles.length >= 3;
+  const hasVariables = variables !== null && Object.keys(variables.variableCollections).length > 0;
+  const noStyles = styles.length === 0;
+
+  // If the team uses Variables, absence of Styles is expected (modern approach)
+  if (noStyles && hasVariables) {
+    return {
+      id: 't5-style-coverage',
+      name: 'Style Library Coverage',
+      status: 'warn',
+      score: 60,
+      message: 'No published styles found. Team appears to use Variables (modern approach) — consider publishing text and effect styles alongside tokens.',
+      details: [
+        { label: 'Color styles', value: '0 (using Variables)', status: 'warn' },
+        { label: 'Text styles', value: '0 (using Variables)', status: 'warn' },
+        { label: 'Effect styles', value: '0', status: 'warn' },
+        { label: 'Grid styles', value: '0', status: 'warn' },
+      ],
+      impact: 'medium',
+    };
+  }
 
   const details: TestDetail[] = [
     { label: 'Color styles', value: `${fillStyles.length}`, status: fillStyles.length >= 5 ? 'pass' : fillStyles.length > 0 ? 'warn' : 'fail' },
@@ -232,20 +246,17 @@ function testStyleCoverage(styles: FigmaStyleMeta[]): TestResult {
     { label: 'Grid styles', value: `${gridStyles.length}`, status: gridStyles.length > 0 ? 'pass' : 'warn' },
   ];
 
-  const score = Math.min(
-    100,
-    Math.round(
-      ((fillStyles.length >= 5 ? 30 : (fillStyles.length / 5) * 30) +
-        (textStyles.length >= 3 ? 30 : (textStyles.length / 3) * 30) +
-        (effectStyles.length > 0 ? 20 : 0) +
-        (gridStyles.length > 0 ? 20 : 0))
-    )
-  );
+  const score = Math.min(100, Math.round(
+    (fillStyles.length >= 5 ? 30 : (fillStyles.length / 5) * 30) +
+    (textStyles.length >= 3 ? 30 : (textStyles.length / 3) * 30) +
+    (effectStyles.length > 0 ? 20 : 0) +
+    (gridStyles.length > 0 ? 20 : 0)
+  ));
 
   return {
     id: 't5-style-coverage',
     name: 'Style Library Coverage',
-    status: score >= 80 ? 'pass' : score >= 50 ? 'warn' : 'fail',
+    status: score >= 80 ? 'pass' : score >= 40 ? 'warn' : 'fail',
     score,
     message: `${styles.length} styles total: ${fillStyles.length} fill, ${textStyles.length} text, ${effectStyles.length} effect, ${gridStyles.length} grid.`,
     details,
@@ -253,6 +264,7 @@ function testStyleCoverage(styles: FigmaStyleMeta[]): TestResult {
   };
 }
 
+// T6
 function testTokenScopes(variables: FigmaVariablesResponse | null): TestResult {
   if (!variables) {
     return {
@@ -277,26 +289,24 @@ function testTokenScopes(variables: FigmaVariablesResponse | null): TestResult {
     };
   }
 
-  const scopedVars = allVars.filter((v) => v.scopes && v.scopes.length > 0 && !v.scopes.includes('ALL_SCOPES'));
-  const allScopedVars = allVars.filter((v) => v.scopes && v.scopes.includes('ALL_SCOPES'));
+  // ALL_SCOPES is intentional and valid — count it as well-scoped
+  const wellScopedVars = allVars.filter((v) => v.scopes && v.scopes.length > 0);
+  const specificScopedVars = allVars.filter((v) => v.scopes && v.scopes.length > 0 && !v.scopes.includes('ALL_SCOPES'));
   const unscopedVars = allVars.filter((v) => !v.scopes || v.scopes.length === 0);
 
-  const score = Math.round((scopedVars.length / allVars.length) * 100);
+  const score = Math.round((wellScopedVars.length / allVars.length) * 100);
 
   return {
     id: 't6-scopes',
     name: 'Token Scope Definitions',
-    status: score >= 50 ? 'pass' : score > 0 ? 'warn' : 'fail',
+    status: score >= 80 ? 'pass' : score >= 50 ? 'warn' : 'fail',
     score,
-    message: `${scopedVars.length} tokens have specific scopes, ${allScopedVars.length} are all-scope, ${unscopedVars.length} unscoped.`,
+    message: `${specificScopedVars.length} tokens have specific scopes, ${wellScopedVars.length - specificScopedVars.length} use ALL_SCOPES, ${unscopedVars.length} unscoped.`,
     details: [
-      { label: 'Specifically scoped', value: `${scopedVars.length}`, status: 'pass' },
-      { label: 'All-scoped (permissive)', value: `${allScopedVars.length}`, status: 'warn' },
+      { label: 'Specifically scoped', value: `${specificScopedVars.length}`, status: specificScopedVars.length > 0 ? 'pass' : 'warn' },
+      { label: 'All-scoped', value: `${wellScopedVars.length - specificScopedVars.length}`, status: 'pass' },
       { label: 'Unscoped', value: `${unscopedVars.length}`, status: unscopedVars.length > 0 ? 'fail' : 'pass' },
     ],
     impact: 'low',
   };
 }
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-void PRIMITIVE_PATTERNS;
