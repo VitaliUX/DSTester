@@ -238,7 +238,7 @@ export default function Home() {
                   No suites match the current filter.
                 </div>
               ) : (
-                filteredSuites.map((suite) => <TestSuiteCard key={suite.id} suite={suite} />)
+                filteredSuites.map((suite) => <TestSuiteCard key={suite.id} suite={suite} fileKey={report.fileKey} />)
               )}
             </div>
 

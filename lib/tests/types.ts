@@ -14,6 +14,7 @@ export interface TestDetail {
   label: string;
   value: string;
   status?: TestStatus;
+  nodeId?: string;
 }
 
 export interface TestSuite {

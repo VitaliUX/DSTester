@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Palette, Layers, Eye, Code2, Ruler } from 'lucide-react';
+import { ChevronDown, ChevronRight, Palette, Layers, Eye, Code2, Ruler, ExternalLink } from 'lucide-react';
 import type { TestSuite, TestResult } from '@/lib/tests/types';
 import { StatusBadge, StatusDot } from './StatusBadge';
 import { ScoreRingInline } from './ScoreRing';
@@ -13,7 +13,12 @@ const ICONS: Record<string, React.ReactNode> = {
   ruler: <Ruler className="w-[18px] h-[18px]" />,
 };
 
+const STATUS_ORDER: Record<string, number> = { fail: 0, warn: 1, pass: 2, skip: 3 };
 const IMPACT_ORDER = { critical: 0, high: 1, medium: 2, low: 3, undefined: 4 };
+
+function figmaNodeUrl(fileKey: string, nodeId: string) {
+  return `https://www.figma.com/design/${fileKey}?node-id=${nodeId.replace(':', '-')}`;
+}
 
 function ImpactChip({ impact }: { impact?: string }) {
   if (!impact) return null;
@@ -34,7 +39,7 @@ function ImpactChip({ impact }: { impact?: string }) {
   );
 }
 
-function TestResultRow({ test }: { test: TestResult }) {
+function TestResultRow({ test, fileKey }: { test: TestResult; fileKey: string }) {
   const [expanded, setExpanded] = useState(false);
   const hasDetails = test.details && test.details.length > 0;
 
@@ -83,7 +88,20 @@ function TestResultRow({ test }: { test: TestResult }) {
                 <span className="font-medium min-w-[140px] flex-shrink-0" style={{ color: 'var(--md-on-surface)' }}>
                   {detail.label}
                 </span>
-                <span className="break-all" style={{ color: 'var(--md-on-surface-variant)' }}>{detail.value}</span>
+                <span className="flex-1 break-all" style={{ color: 'var(--md-on-surface-variant)' }}>{detail.value}</span>
+                {detail.nodeId && fileKey && (
+                  <a
+                    href={figmaNodeUrl(fileKey, detail.nodeId)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open in Figma"
+                    className="flex-shrink-0 ml-1 opacity-60 hover:opacity-100 transition-opacity"
+                    style={{ color: 'var(--md-primary)' }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
               </div>
             ))}
           </div>
@@ -93,11 +111,13 @@ function TestResultRow({ test }: { test: TestResult }) {
   );
 }
 
-export function TestSuiteCard({ suite }: { suite: TestSuite }) {
+export function TestSuiteCard({ suite, fileKey }: { suite: TestSuite; fileKey: string }) {
   const [open, setOpen] = useState(true);
-  const sortedTests = [...suite.tests].sort(
-    (a, b) => (IMPACT_ORDER[a.impact ?? 'undefined'] - IMPACT_ORDER[b.impact ?? 'undefined'])
-  );
+  const sortedTests = [...suite.tests].sort((a, b) => {
+    const statusDiff = (STATUS_ORDER[a.status] ?? 4) - (STATUS_ORDER[b.status] ?? 4);
+    if (statusDiff !== 0) return statusDiff;
+    return (IMPACT_ORDER[a.impact ?? 'undefined'] - IMPACT_ORDER[b.impact ?? 'undefined']);
+  });
 
   return (
     <div
@@ -139,7 +159,7 @@ export function TestSuiteCard({ suite }: { suite: TestSuite }) {
 
       {open && (
         <div style={{ borderTop: '1px solid var(--md-outline-variant)' }}>
-          {sortedTests.map((test) => <TestResultRow key={test.id} test={test} />)}
+          {sortedTests.map((test) => <TestResultRow key={test.id} test={test} fileKey={fileKey} />)}
         </div>
       )}
     </div>

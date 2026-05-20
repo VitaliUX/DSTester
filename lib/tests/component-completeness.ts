@@ -8,6 +8,7 @@ const EXPECTED_THEMES = ['light', 'dark'];
 
 interface ComponentSetInfo {
   name: string;
+  nodeId: string;
   variants: string[];
   properties: string[];
   hasDescription: boolean;
@@ -42,6 +43,7 @@ function extractComponentSets(doc: FigmaNode): ComponentSetInfo[] {
 
       sets.push({
         name: node.name,
+        nodeId: node.id,
         variants: variantProps,
         properties: Object.keys(propDefs),
         hasDescription: !!(node.description && node.description.trim().length > 0),
@@ -72,6 +74,7 @@ function testVariantCoverage(sets: ComponentSetInfo[]): TestResult {
     label: s.name,
     value: s.variants.length > 0 ? `${s.properties.length} properties, ${s.variants.length} variant values` : 'No variants',
     status: (s.variants.length > 0 ? 'pass' : 'warn') as 'pass' | 'warn',
+    nodeId: s.nodeId,
   }));
 
   return {
@@ -222,7 +225,7 @@ function testComponentCount(components: FigmaComponentMeta[]): TestResult {
 
 function testInteractiveStates(sets: ComponentSetInfo[]): TestResult {
   const interactiveComponents = ['button', 'input', 'checkbox', 'radio', 'toggle', 'switch', 'select', 'dropdown', 'tab', 'link'];
-  const found: { name: string; hasStates: boolean }[] = [];
+  const found: { name: string; hasStates: boolean; nodeId: string }[] = [];
 
   for (const comp of sets) {
     const nameLower = comp.name.toLowerCase();
@@ -230,7 +233,7 @@ function testInteractiveStates(sets: ComponentSetInfo[]): TestResult {
       const hasStates = comp.variants.some((v) =>
         ['hover', 'focus', 'active', 'disabled'].some((s) => v.toLowerCase().includes(s))
       );
-      found.push({ name: comp.name, hasStates });
+      found.push({ name: comp.name, hasStates, nodeId: comp.nodeId });
     }
   }
 
@@ -258,6 +261,7 @@ function testInteractiveStates(sets: ComponentSetInfo[]): TestResult {
       label: f.name,
       value: f.hasStates ? 'Has states' : 'Missing states',
       status: (f.hasStates ? 'pass' : 'fail') as 'pass' | 'fail',
+      nodeId: f.nodeId,
     })),
     impact: 'critical',
   };

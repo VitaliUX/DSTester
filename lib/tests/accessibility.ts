@@ -13,6 +13,7 @@ interface ColorPair {
   background: { r: number; g: number; b: number };
   fontSize?: number;
   context: string;
+  nodeId: string;
 }
 
 export function testAccessibility(
@@ -47,6 +48,7 @@ function extractColorPairs(doc: FigmaNode): ColorPair[] {
       background: { r: 1, g: 1, b: 1 }, // assume white bg as worst case
       fontSize: node.style?.fontSize,
       context: node.name || 'text',
+      nodeId: node.id,
     });
   });
 
@@ -65,7 +67,7 @@ function testColorContrast(pairs: ColorPair[]): TestResult {
     };
   }
 
-  const results: Array<{ pass: boolean; ratio: number; hex: string; context: string }> = [];
+  const results: Array<{ pass: boolean; ratio: number; hex: string; context: string; nodeId: string }> = [];
 
   for (const pair of pairs) {
     const textLum = relativeLuminance(pair.text.r, pair.text.g, pair.text.b);
@@ -78,6 +80,7 @@ function testColorContrast(pairs: ColorPair[]): TestResult {
       ratio: Math.round(ratio * 100) / 100,
       hex: rgbToHex(pair.text.r, pair.text.g, pair.text.b),
       context: pair.context,
+      nodeId: pair.nodeId,
     });
   }
 
@@ -89,6 +92,7 @@ function testColorContrast(pairs: ColorPair[]): TestResult {
     label: `${f.hex} on white`,
     value: `Ratio: ${f.ratio}:1 (context: ${f.context})`,
     status: 'fail' as const,
+    nodeId: f.nodeId,
   }));
 
   if (details.length < 5) {
@@ -159,7 +163,7 @@ function testTextSizes(doc: FigmaNode): TestResult {
 }
 
 function testTouchTargets(doc: FigmaNode): TestResult {
-  const interactiveNodes: Array<{ name: string; w: number; h: number }> = [];
+  const interactiveNodes: Array<{ name: string; w: number; h: number; nodeId: string }> = [];
   const INTERACTIVE_TYPES = ['button', 'input', 'checkbox', 'radio', 'toggle', 'switch', 'tab', 'link', 'chip', 'icon-button'];
 
   walkNodes(doc, (node) => {
@@ -173,6 +177,7 @@ function testTouchTargets(doc: FigmaNode): TestResult {
         name: node.name,
         w: node.absoluteBoundingBox.width,
         h: node.absoluteBoundingBox.height,
+        nodeId: node.id,
       });
     }
   });
@@ -203,14 +208,15 @@ function testTouchTargets(doc: FigmaNode): TestResult {
       label: n.name,
       value: `${Math.round(n.w)}×${Math.round(n.h)}px`,
       status: 'fail' as const,
+      nodeId: n.nodeId,
     })),
     impact: 'high',
   };
 }
 
 function testFocusIndicators(doc: FigmaNode): TestResult {
-  const hasFocusComponents: string[] = [];
-  const missingFocusComponents: string[] = [];
+  const hasFocusComponents: Array<{ name: string; nodeId: string }> = [];
+  const missingFocusComponents: Array<{ name: string; nodeId: string }> = [];
 
   walkNodes(doc, (node) => {
     if (node.type !== 'COMPONENT_SET') return;
@@ -224,13 +230,14 @@ function testFocusIndicators(doc: FigmaNode): TestResult {
     );
 
     if (hasFocusVariant) {
-      hasFocusComponents.push(node.name);
+      hasFocusComponents.push({ name: node.name, nodeId: node.id });
     } else {
-      missingFocusComponents.push(node.name);
+      missingFocusComponents.push({ name: node.name, nodeId: node.id });
     }
   });
 
   const total = hasFocusComponents.length + missingFocusComponents.length;
+
   if (total === 0) {
     return {
       id: 'a11y-4-focus',
@@ -251,8 +258,8 @@ function testFocusIndicators(doc: FigmaNode): TestResult {
     score,
     message: `${hasFocusComponents.length}/${total} interactive components have explicit focus state variants.`,
     details: [
-      ...hasFocusComponents.slice(0, 4).map((n) => ({ label: n, value: 'Focus state ✓', status: 'pass' as const })),
-      ...missingFocusComponents.slice(0, 4).map((n) => ({ label: n, value: 'No focus state', status: 'fail' as const })),
+      ...hasFocusComponents.slice(0, 4).map((n) => ({ label: n.name, value: 'Focus state ✓', status: 'pass' as const, nodeId: n.nodeId })),
+      ...missingFocusComponents.slice(0, 4).map((n) => ({ label: n.name, value: 'No focus state', status: 'fail' as const, nodeId: n.nodeId })),
     ],
     impact: 'critical',
   };
