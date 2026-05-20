@@ -1,0 +1,15 @@
+# Dependencies
+ds-tester/node_modules/
+
+# Next.js build output
+ds-tester/.next/
+ds-tester/out/
+
+# TypeScript build info
+ds-tester/tsconfig.tsbuildinfo
+
+# OS
+.DS_Store
+
+# Claude agent internals
+.claude/
