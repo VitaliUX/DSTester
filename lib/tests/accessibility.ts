@@ -2,6 +2,8 @@ import type { FigmaFile, FigmaNode, FigmaVariablesResponse } from '../figma-clie
 import { walkNodes, relativeLuminance, contrastRatio, rgbToHex } from '../figma-client';
 import type { TestResult, TestDetail } from './types';
 
+const isDeprecated = (name: string) => /deprecated/i.test(name);
+
 const MIN_CONTRAST_AA_NORMAL = 4.5;
 const MIN_CONTRAST_AA_LARGE = 3.0;
 const MIN_CONTRAST_AAA_NORMAL = 7.0;
@@ -46,6 +48,7 @@ function extractColorPairs(doc: FigmaNode): ColorPair[] {
 
   function walk(node: FigmaNode, ancestor: string) {
     const isComponent = node.type === 'COMPONENT' || node.type === 'COMPONENT_SET' || node.type === 'INSTANCE';
+    if (isComponent && isDeprecated(node.name)) return;
     const ctx = isComponent ? componentContext(node) : ancestor;
 
     if (node.type === 'TEXT' && node.fills?.length && node.absoluteBoundingBox) {
@@ -184,7 +187,8 @@ function testTouchTargets(doc: FigmaNode): TestResult {
     if (
       (node.type === 'COMPONENT' || node.type === 'INSTANCE') &&
       INTERACTIVE_TYPES.some((t) => nameLower.includes(t)) &&
-      node.absoluteBoundingBox
+      node.absoluteBoundingBox &&
+      !isDeprecated(node.name)
     ) {
       interactiveNodes.push({
         name: node.name,
@@ -232,7 +236,7 @@ function testFocusIndicators(doc: FigmaNode): TestResult {
   const missingFocusComponents: Array<{ name: string; nodeId: string }> = [];
 
   walkNodes(doc, (node) => {
-    if (node.type !== 'COMPONENT_SET') return;
+    if (node.type !== 'COMPONENT_SET' || isDeprecated(node.name)) return;
     const nameLower = node.name.toLowerCase();
     const isInteractive = ['button', 'input', 'checkbox', 'radio', 'toggle', 'link', 'tab'].some((t) => nameLower.includes(t));
     if (!isInteractive) return;
@@ -332,7 +336,7 @@ function testAriaAnnotations(doc: FigmaNode): TestResult {
   let annotationFrameCount = 0;
 
   walkNodes(doc, (node) => {
-    if (node.type === 'COMPONENT_SET' || node.type === 'COMPONENT') {
+    if ((node.type === 'COMPONENT_SET' || node.type === 'COMPONENT') && !isDeprecated(node.name)) {
       const desc = (node.description ?? '').toLowerCase();
       if (
         desc.includes('aria') ||

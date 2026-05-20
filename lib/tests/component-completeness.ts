@@ -2,6 +2,8 @@ import type { FigmaFile, FigmaComponentMeta, FigmaNode } from '../figma-client';
 import { walkNodes } from '../figma-client';
 import type { TestResult, TestDetail } from './types';
 
+const isDeprecated = (name: string) => /deprecated/i.test(name);
+
 const EXPECTED_STATES = ['default', 'hover', 'focus', 'active', 'disabled', 'error', 'loading'];
 const EXPECTED_SIZES = ['sm', 'md', 'lg', 'small', 'medium', 'large', 'xs', 'xl'];
 const EXPECTED_THEMES = ['light', 'dark'];
@@ -35,7 +37,7 @@ function extractComponentSets(doc: FigmaNode): ComponentSetInfo[] {
   const sets: ComponentSetInfo[] = [];
 
   walkNodes(doc, (node) => {
-    if (node.type === 'COMPONENT_SET') {
+    if (node.type === 'COMPONENT_SET' && !isDeprecated(node.name)) {
       const propDefs = node.componentPropertyDefinitions ?? {};
       const variantProps = Object.entries(propDefs)
         .filter(([, def]) => def.type === 'VARIANT')
@@ -198,9 +200,10 @@ function testThemeCoverage(sets: ComponentSetInfo[]): TestResult {
 }
 
 function testComponentCount(components: FigmaComponentMeta[]): TestResult {
-  const total = components.length;
-  const withDescription = components.filter((c) => c.description && c.description.trim().length > 10).length;
-  const withDocs = components.filter((c) => c.documentationLinks && c.documentationLinks.length > 0).length;
+  const active = components.filter((c) => !isDeprecated(c.name));
+  const total = active.length;
+  const withDescription = active.filter((c) => c.description && c.description.trim().length > 10).length;
+  const withDocs = active.filter((c) => c.documentationLinks && c.documentationLinks.length > 0).length;
 
   const score = total === 0 ? 0 : Math.min(100,
     (total >= 20 ? 40 : (total / 20) * 40) +
